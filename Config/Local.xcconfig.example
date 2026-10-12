@@ -1,0 +1,4 @@
+// Copy to Config/Local.xcconfig and fill in. Find your team ID with: security find-identity -v -p codesigning
+// (the 10-character ID in Xcode > Settings > Accounts). Keep the bundle ID stable — the Keychain ACL is tied to it.
+DEVELOPMENT_TEAM = XXXXXXXXXX
+PRODUCT_BUNDLE_IDENTIFIER = com.example.glance

@@ -17,3 +17,6 @@ __pycache__/
 
 # Local release notes
 RELEASING.md
+
+# Per-developer signing (team ID / bundle ID)
+Config/Local.xcconfig

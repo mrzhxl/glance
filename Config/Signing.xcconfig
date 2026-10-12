@@ -1,0 +1,6 @@
+// Signing for local, profile-free builds. Defaults are upstream's; put your own Apple team ID and bundle ID in
+// Config/Local.xcconfig (git-ignored, see Local.xcconfig.example) — it is optional and overrides these values.
+DEVELOPMENT_TEAM = 99KWT739F7
+PRODUCT_BUNDLE_IDENTIFIER = com.jonathan.glance
+
+#include? "Local.xcconfig"
