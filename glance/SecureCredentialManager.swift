@@ -2,7 +2,7 @@
 //  SecureCredentialManager.swift
 //  glance
 //
-//  Two-tier storage on KeychainManager: a Touch-ID-gated session key (unwrapped once per launch) wraps an ungated encrypted
+//  Two-tier storage on KeychainManager: a session key (unwrapped once per launch, behind Touch ID) wraps an ungated encrypted
 //  password blob, safe to read anytime — including the lock screen, where no app UI exists to host a Touch ID prompt.
 //  Touch ID authorizes the session; nothing yet authorizes each individual unlock beyond that (face recognition will).
 //
@@ -117,20 +117,17 @@ enum SecureCredentialManager {
         KeychainManager.exists(account: passwordBlobAccount)
     }
 
-    /// Prompts Touch ID and unwraps the session key, creating it Touch-ID-gated on first run. Caches only after a real gated
-    /// read-back succeeds — `SecItemAdd` alone returns success even if the user hit Cancel on the auth UI, and bridging
-    /// `LAContext.evaluatePolicy` synchronously via a semaphore deadlocks the thread pool and crashes the process.
-    /// Must succeed before `savePassword`/`readPassword`. Blocking; call from a background task.
-    nonisolated static func unlockSession(reason: String) throws {
+    /// Prompts Touch ID and unwraps the session key, creating it on first run. Local self-signed builds have no provisioning
+    /// profile, so no `keychain-access-groups` entitlement and no data-protection Keychain: the key lives in the login
+    /// Keychain (ACL'd to this app's signature) and Touch ID is enforced here via `LAContext` before the key is touched.
+    /// Uses the native async `evaluatePolicy` — bridging it synchronously via a semaphore deadlocks the thread pool.
+    /// Must succeed before `savePassword`/`readPassword`. Call from a background task.
+    nonisolated static func unlockSession(reason: String) async throws {
         if cachedKey() != nil { return }
 
-        // The existence check, not the read, decides whether a key gets created (load-bearing): a cancelled Touch ID prompt on
-        // a user-presence item reports `errSecItemNotFound`, indistinguishable from no key — deciding on the read's error would
-        // mint a fresh key (destroying the one that decrypts existing data) on every mis-tap.
         if KeychainManager.exists(account: sessionKeyAccount) {
-            let context = LAContext()
-            context.localizedReason = reason
-            let data = try KeychainManager.read(account: sessionKeyAccount, context: context)
+            try await authenticateUser(reason: reason)
+            let data = try KeychainManager.read(account: sessionKeyAccount)
             setCachedKey(SymmetricKey(data: data))
             return
         }
@@ -141,19 +138,23 @@ enum SecureCredentialManager {
             throw SecureCredentialError.sessionKeyUnavailable
         }
 
+        try await authenticateUser(reason: reason)
         let key = SymmetricKey(size: .bits256)
-        let access = try KeychainManager.makeUserPresenceAccessControl()
-        try KeychainManager.save(
-            account: sessionKeyAccount,
-            data: key.withUnsafeBytes { Data($0) },
-            accessControl: access
-        )
+        try KeychainManager.save(account: sessionKeyAccount, data: key.withUnsafeBytes { Data($0) })
 
-        // Read back through the gated path rather than trusting the write — only a real read proves authentication happened.
-        let readBackContext = LAContext()
-        readBackContext.localizedReason = reason
-        let data = try KeychainManager.read(account: sessionKeyAccount, context: readBackContext)
+        // Read back rather than trusting the write, so a Keychain that silently refused the item fails here, not at first use.
+        let data = try KeychainManager.read(account: sessionKeyAccount)
         setCachedKey(SymmetricKey(data: data))
+    }
+
+    /// Touch ID, falling back to the login password (`.deviceOwnerAuthentication` matches the old `.userPresence` gate).
+    nonisolated private static func authenticateUser(reason: String) async throws {
+        let context = LAContext()
+        do {
+            _ = try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+        } catch {
+            throw KeychainError.authenticationFailed
+        }
     }
 
     /// Checked without needing the key itself, so this stays answerable precisely when the key can't be read.

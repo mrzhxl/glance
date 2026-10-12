@@ -287,7 +287,7 @@ final class OnboardingController {
         guard !SecureCredentialManager.isSessionUnlocked else { return true }
         do {
             try await Task.detached(priority: .userInitiated) {
-                try SecureCredentialManager.unlockSession(reason: reason)
+                try await SecureCredentialManager.unlockSession(reason: reason)
             }.value
             return true
         } catch {
@@ -1073,7 +1073,7 @@ final class OnboardingController {
 
         do {
             try await Task.detached(priority: .userInitiated) {
-                try SecureCredentialManager.unlockSession(reason: "Set up Glance")
+                try await SecureCredentialManager.unlockSession(reason: "Set up Glance")
             }.value
 
             // Only now that the session key exists can samples be encrypted and saved.

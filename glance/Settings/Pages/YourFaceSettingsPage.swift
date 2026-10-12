@@ -253,7 +253,7 @@ struct YourFaceSettingsPage: View {
         Task {
             do {
                 try await Task.detached(priority: .userInitiated) {
-                    try SecureCredentialManager.unlockSession(reason: "Authenticate to view your enrolled face")
+                    try await SecureCredentialManager.unlockSession(reason: "Authenticate to view your enrolled face")
                 }.value
                 store.reloadIfUnlocked()
             } catch {
