@@ -48,9 +48,13 @@ enum KeystrokeInjector {
         }
         let source = CGEventSource(stateID: .hidSystemState)
         try clearFocusedField(source: source)
+        // Let the secure field finish processing the clear before the first character arrives, or the leading characters get dropped.
+        Thread.sleep(forTimeInterval: 0.1)
         for char in text {
             try postUnicode(String(char), source: source)
         }
+        // Same for the tail: Return must not overtake the last characters still queued in the field.
+        Thread.sleep(forTimeInterval: 0.06)
         try postReturn(source: source)
     }
 
@@ -105,6 +109,9 @@ enum KeystrokeInjector {
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
             throw KeystrokeError.eventCreationFailed
         }
+        // Explicitly no modifiers, so a still-held ⌘ or a lingering flag from the clear step can't turn a character into a shortcut.
+        keyDown.flags = []
+        keyUp.flags = []
         utf16.withUnsafeBufferPointer { buf in
             if let base = buf.baseAddress {
                 keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: base)
@@ -112,9 +119,9 @@ enum KeystrokeInjector {
             }
         }
         keyDown.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.012)
+        Thread.sleep(forTimeInterval: 0.015)
         keyUp.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.012)
+        Thread.sleep(forTimeInterval: 0.015)
     }
 
     /// Physical Return key (virtual key 0x24).
