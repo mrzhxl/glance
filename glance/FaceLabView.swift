@@ -11,7 +11,7 @@ import SwiftUI
 import Charts
 
 struct FaceLabView: View {
-    /// Injected from AppEnvironment so Recognition settings reads calibration data from this same instance.
+    /// Retained only while the hidden debug tab is visible.
     @Bindable var controller: FaceLabController
 
     var body: some View {

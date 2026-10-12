@@ -158,6 +158,11 @@ final class NotchWindowController {
         let size = NotchGeometry.windowSize(for: currentGeometry.style)
         let rect = NSRect(x: 0, y: 0, width: size.width, height: size.height)
         let newWindow = NotchWindow(contentRect: rect)
+        // The panel's own SwiftUI animation has already reached its closed notch
+        // size before this window is ordered out. Do not add AppKit's separate
+        // blur/fade transition at that point — revealing the hardware notch must
+        // be instantaneous.
+        newWindow.animationBehavior = .none
         newWindow.contentView = contentView
         window = newWindow
         return newWindow

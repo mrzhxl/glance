@@ -12,7 +12,6 @@ import Observation
 @MainActor
 final class AppEnvironment {
     let pocController = POCController()
-    let faceLabController = FaceLabController()
     let faceUnlockCoordinator: FaceUnlockCoordinator
     /// Held, not just constructed — owns a repeating timer that would silently stop enforcing auto-lock if deallocated.
     let sessionAutoLocker: SessionAutoLocker

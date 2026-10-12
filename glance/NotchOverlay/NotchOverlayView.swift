@@ -147,7 +147,10 @@ struct NotchOverlayView: View {
     /// the physical notch width instead of coming up short by the flare.
     private var currentSize: CGSize {
         let body = visualIsExpanded ? openBodySize : closedBodySize
-        let bump: CGFloat = isHovering ? NotchGeometry.hoverBump : 0
+        // The resting silhouette must resolve to the measured hardware size.
+        // Keeping the hover bump while closing made the overlay finish wider and
+        // taller than the real notch immediately before the window disappeared.
+        let bump: CGFloat = visualIsExpanded && isHovering ? NotchGeometry.hoverBump : 0
         return CGSize(
             width: body.width + NotchGeometry.flareAllowance(topRadius: topRadius, style: style) + bump,
             height: body.height + bump

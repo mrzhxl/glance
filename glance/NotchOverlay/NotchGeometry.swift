@@ -189,10 +189,6 @@ struct NotchGeometry {
         }
     }
 
-    /// Floor for a physical notch's measured width — the auxiliary-area arithmetic
-    /// below can come up implausibly small on odd display configurations.
-    private static let minimumNotchWidth: CGFloat = 200
-
     static func forMainScreen() -> NotchGeometry {
         guard let screen = NSScreen.main else {
             return NotchGeometry(closedSize: pillClosedSize, isPhysicalNotch: false)
@@ -209,7 +205,10 @@ struct NotchGeometry {
         // displays without one, hence the safeAreaInsets check above.
         let leftPadding = screen.auxiliaryTopLeftArea?.width ?? 0
         let rightPadding = screen.auxiliaryTopRightArea?.width ?? 0
-        let width = max(screen.frame.width - leftPadding - rightPadding, minimumNotchWidth)
+        // These are all AppKit point values. Do not impose a model-derived minimum:
+        // the camera housing on a 13-inch MacBook Air is legitimately narrower than
+        // the 200-point housing on several MacBook Pro models.
+        let width = screen.frame.width - leftPadding - rightPadding
         let height = screen.safeAreaInsets.top
 
         return NotchGeometry(closedSize: CGSize(width: width, height: height), isPhysicalNotch: true)

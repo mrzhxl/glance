@@ -35,8 +35,10 @@ final class FaceUnlockCoordinator {
     private var scanWindowDuration: TimeInterval {
         TimeInterval(GlanceSettings.shared.faceDetectionSeconds)
     }
-    /// Requires several consecutive below-threshold frames so a single bad-angle read doesn't trigger the failure animation.
-    private let wrongFaceStreakThreshold = 6
+    /// A wake often catches the owner while they are still looking away from
+    /// the camera. Require a sustained non-match rather than a few early
+    /// frames before giving the failure animation.
+    private let wrongFaceGraceDuration: Duration = .seconds(2)
 
     private(set) var statusMessage = "Idle"
     private(set) var lastOutcome: String?
@@ -330,7 +332,9 @@ final class FaceUnlockCoordinator {
         let livenessEnabled = GlanceSettings.shared.livenessChecksEnabled
         let liveness = LivenessAnalyzer()
         liveness.modeProvider = { GlanceSettings.shared.livenessMode }
-        var consecutiveWrongFaceFrames = 0
+        /// Set by the first consecutive non-match. A gap in face detection or
+        /// a valid match clears it, so only a sustained wrong face resolves the scan.
+        var wrongFaceStartedAt: ContinuousClock.Instant?
 
         /// Cleared the moment a detected face fails to match, so a latched match can't be handed to whoever steps in next.
         var readyMatch: ScoredIdentity?
@@ -361,7 +365,7 @@ final class FaceUnlockCoordinator {
             }.value
 
             guard let (result, livenessFrame) = outcome else {
-                consecutiveWrongFaceFrames = 0
+                wrongFaceStartedAt = nil
                 lastFaceBoundingBox = nil
                 try? await Task.sleep(nanoseconds: 20_000_000)
                 continue
@@ -390,12 +394,14 @@ final class FaceUnlockCoordinator {
             let matched = pipeline.bestMatch(in: scored, threshold: matchThreshold)
 
             if let matched {
-                consecutiveWrongFaceFrames = 0
+                wrongFaceStartedAt = nil
                 readyMatch = matched
             } else {
                 readyMatch = nil
-                consecutiveWrongFaceFrames += 1
-                if consecutiveWrongFaceFrames >= wrongFaceStreakThreshold {
+                if wrongFaceStartedAt == nil {
+                    wrongFaceStartedAt = .now
+                }
+                if ContinuousClock.now - wrongFaceStartedAt! >= wrongFaceGraceDuration {
                     return .consistentlyWrongFace
                 }
             }

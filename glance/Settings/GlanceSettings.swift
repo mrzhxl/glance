@@ -11,16 +11,27 @@ import Observation
 
 /// How long the Touch-ID-unlocked session may sit idle before it re-locks.
 enum AutoLockInterval: Int, CaseIterable, Identifiable {
-    case oneDay = 1
     case sevenDays = 7
     case fourteenDays = 14
     case thirtyDays = 30
+    case never = 0
 
     var id: Int { rawValue }
 
-    var title: String { rawValue == 1 ? "1 day" : "\(rawValue) days" }
+    var title: String {
+        switch self {
+        case .never: return "Never"
+        case .sevenDays: return "7 days"
+        case .fourteenDays: return "14 days"
+        case .thirtyDays: return "30 days"
+        }
+    }
 
-    var duration: TimeInterval { TimeInterval(rawValue) * 24 * 60 * 60 }
+    /// `nil` means the session stays open until the app exits or the user
+    /// explicitly locks it; the session key itself is never persisted in memory.
+    var duration: TimeInterval? {
+        self == .never ? nil : TimeInterval(rawValue) * 24 * 60 * 60
+    }
 
     /// Position in `allCases`, used to drive the discrete 4-stop slider.
     var sliderIndex: Double {
@@ -29,7 +40,7 @@ enum AutoLockInterval: Int, CaseIterable, Identifiable {
 
     static func from(sliderIndex: Double) -> AutoLockInterval {
         let clamped = Int(sliderIndex.rounded())
-        return allCases.indices.contains(clamped) ? allCases[clamped] : .sevenDays
+        return allCases.indices.contains(clamped) ? allCases[clamped] : .thirtyDays
     }
 }
 
@@ -104,6 +115,7 @@ final class GlanceSettings {
         static let faceDetectionSeconds = "GlanceSettings.faceDetectionSeconds"
         static let autoRetryOnce = "GlanceSettings.autoRetryOnce"
         static let hapticFeedbackEnabled = "GlanceSettings.hapticFeedbackEnabled"
+        static let showsInMenuBar = "GlanceSettings.showsInMenuBar"
         static let preferredDisplayID = "GlanceSettings.preferredDisplayID"
         static let preferredDisplayName = "GlanceSettings.preferredDisplayName"
         static let autoLockIntervalDays = "GlanceSettings.autoLockIntervalDays"
@@ -116,6 +128,9 @@ final class GlanceSettings {
     }
 
     @ObservationIgnored private let defaults = UserDefaults.standard
+    /// AppKit owns the actual status item. This callback keeps the persisted
+    /// preference independent from that UI lifecycle.
+    @ObservationIgnored private var menuBarVisibilityDidChange: ((Bool) -> Void)?
 
     var isFaceUnlockEnabled: Bool {
         didSet { defaults.set(isFaceUnlockEnabled, forKey: Key.isFaceUnlockEnabled) }
@@ -197,6 +212,21 @@ final class GlanceSettings {
     /// see `NotchOverlayView`'s hover handler and `.onChange(of: controller.phase)`.
     var hapticFeedbackEnabled: Bool {
         didSet { defaults.set(hapticFeedbackEnabled, forKey: Key.hapticFeedbackEnabled) }
+    }
+    /// Hiding the status item does not quit Glance; a relaunch still routes
+    /// through `AppDelegate.applicationShouldHandleReopen` to show Settings.
+    var showsInMenuBar: Bool {
+        didSet {
+            defaults.set(showsInMenuBar, forKey: Key.showsInMenuBar)
+            menuBarVisibilityDidChange?(showsInMenuBar)
+        }
+    }
+
+    /// Bound once by `AppDelegate` after AppKit has finished launching. The
+    /// initial call applies the stored preference as well as subsequent edits.
+    func bindMenuBarVisibility(_ handler: @escaping (Bool) -> Void) {
+        menuBarVisibilityDidChange = handler
+        handler(showsInMenuBar)
     }
 
     static let faceDetectionRange = 3...10
@@ -301,13 +331,15 @@ final class GlanceSettings {
             ?? 5
         autoRetryOnce = defaults.object(forKey: Key.autoRetryOnce) as? Bool ?? false
         hapticFeedbackEnabled = defaults.object(forKey: Key.hapticFeedbackEnabled) as? Bool ?? true
+        // Keep the icon available for existing and new installs unless the
+        // user explicitly opts into the background-only mode.
+        showsInMenuBar = defaults.object(forKey: Key.showsInMenuBar) as? Bool ?? true
         preferredDisplayID = defaults.string(forKey: Key.preferredDisplayID)
         preferredDisplayName = defaults.string(forKey: Key.preferredDisplayName)
 
-        // Defaults to 7 days — long enough not to nag daily users, short
-        // enough not to leave an abandoned session live indefinitely.
+        // Defaults to 30 days
         autoLockInterval = (defaults.object(forKey: Key.autoLockIntervalDays) as? Int)
-            .flatMap(AutoLockInterval.init(rawValue:)) ?? .sevenDays
+            .flatMap(AutoLockInterval.init(rawValue:)) ?? .thirtyDays
         defaultCameraID = defaults.string(forKey: Key.defaultCameraID)
         builtInDisplayCameraID = defaults.string(forKey: Key.builtInDisplayCameraID)
         externalDisplayCameraID = defaults.string(forKey: Key.externalDisplayCameraID)

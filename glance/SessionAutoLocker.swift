@@ -48,7 +48,9 @@ final class SessionAutoLocker {
               let lastActivityAt = SecureCredentialManager.lastActivityAt
         else { return }
 
-        let idleLimit = GlanceSettings.shared.autoLockInterval.duration
+        // A "Never" preference still loses the in-memory session key on app
+        // relaunch; it only disables the idle-timeout lock while Glance runs.
+        guard let idleLimit = GlanceSettings.shared.autoLockInterval.duration else { return }
         guard Date().timeIntervalSince(lastActivityAt) >= idleLimit else { return }
 
         pocController.lockSession()

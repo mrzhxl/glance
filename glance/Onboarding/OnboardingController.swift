@@ -358,20 +358,19 @@ final class OnboardingController {
     /// Hold off accepting captures this long once the camera comes up, so the first
     /// samples aren't taken mid-blink. Detection still runs during this window.
     private let initialCaptureDelay: Duration = .seconds(1.5)
-    /// Enrollment wants a closer face than unlock's bystander cutoff — sitting back in a
-    /// chair is still enough to unlock, but too far for a reliable template.
+    /// Enrollment wants a closer face than unlock's bystander cutoff
     private var enrollmentMinimumFaceWidth: Float {
         max(FaceRecognitionPipeline.minimumProminentFaceWidth, 0.2)
     }
 
     // Pose-matching bands, in radians. Yaw: left turn is positive, matching the mirrored
     // preview. Pitch's sign is the opposite of the initial guess — see `pitchMatches` below.
-    private let yawInnerThreshold: Float = 0.25
+    private let yawInnerThreshold: Float = 0.24
     private let yawCenterTolerance: Float = 0.18
-    private let yawOuterCap: Float = 1.2
-    private let pitchInnerThreshold: Float = 0.20
+    private let yawOuterCap: Float = 0.51
+    private let pitchInnerThreshold: Float = 0.17
     private let pitchCenterTolerance: Float = 0.15
-    private let pitchOuterCap: Float = 0.9
+    private let pitchOuterCap: Float = 0.37
     /// If a pose takes longer than this, matching bands widen by `stallWidenFactor` so an
     /// unusual camera angle can't permanently strand the user.
     private let stallTimeout: Duration = .seconds(12)
@@ -385,7 +384,27 @@ final class OnboardingController {
     /// Whether the last-seen face read as too small to enroll reliably — swaps the pose
     /// instruction for a "move closer" prompt while true.
     private(set) var isTooFar = false
+    /// An extreme head turn is not useful enrollment data. Keep this separate from
+    /// `isTooFar`, which describes face distance rather than pose.
+    private(set) var excessiveTurn: ExcessiveTurn?
     private(set) var enrollmentComplete = false
+
+    enum ExcessiveTurn: Equatable {
+        case left, topLeft, up, topRight, right, bottomRight, down, bottomLeft
+
+        var instruction: String {
+            switch self {
+            case .left: return "Too far left"
+            case .topLeft: return "Too far toward the top left"
+            case .up: return "Too far up"
+            case .topRight: return "Too far toward the top right"
+            case .right: return "Too far right"
+            case .bottomRight: return "Too far toward the bottom right"
+            case .down: return "Too far down"
+            case .bottomLeft: return "Too far toward the bottom left"
+            }
+        }
+    }
 
     /// Sectors already captured — read by EnrollmentRingView to decide which
     /// ticks are lit.
@@ -434,6 +453,7 @@ final class OnboardingController {
     /// completion line.
     var enrollmentInstruction: String {
         if enrollmentComplete { return "Face captured" }
+        if let excessiveTurn { return excessiveTurn.instruction }
         if isTooFar { return "Bring your face closer" }
         return currentPose?.instruction ?? ""
     }
@@ -452,7 +472,7 @@ final class OnboardingController {
     /// Live head direction, or `nil` when there's nothing to point at. Axes are normalized
     /// against the current pose's thresholds, so `progress` hits 1 as the pose starts matching.
     var headTurn: HeadTurn? {
-        guard step == .enroll, !enrollmentComplete, faceDetected, !isTooFar,
+        guard step == .enroll, !enrollmentComplete, faceDetected, !isTooFar, excessiveTurn == nil,
               let pose = currentPose, pose != .center,
               let yaw = currentYaw, let pitch = currentPitch else { return nil }
 
@@ -614,6 +634,7 @@ final class OnboardingController {
         matchStreak = 0
         poseHoldStartedAt = nil
         isTooFar = false
+        excessiveTurn = nil
         enrollmentComplete = false
         guideVisible = false
         cameraPreviewVisible = true
@@ -629,6 +650,7 @@ final class OnboardingController {
         poseStartedAt = .now
         captureReadyAt = .now + initialCaptureDelay
         poseHoldStartedAt = nil
+        excessiveTurn = nil
         sweepWindow.present(for: self)
         Task { await camera.start() }
     }
@@ -803,6 +825,7 @@ final class OnboardingController {
             matchStreak = 0
             poseHoldStartedAt = nil
             isTooFar = false
+            excessiveTurn = nil
             return
         case .tooFar:
             faceDetected = true
@@ -811,6 +834,7 @@ final class OnboardingController {
             matchStreak = 0
             poseHoldStartedAt = nil
             isTooFar = true
+            excessiveTurn = nil
             return
         case .ready(let result):
             guard let yaw = result.face.yaw, let pitch = result.face.pitch else {
@@ -820,12 +844,19 @@ final class OnboardingController {
                 matchStreak = 0
                 poseHoldStartedAt = nil
                 isTooFar = false
+                excessiveTurn = nil
                 return
             }
             faceDetected = true
             currentYaw = yaw
             currentPitch = pitch
             isTooFar = false
+            excessiveTurn = excessiveTurnDirection(yaw: yaw, pitch: pitch)
+            guard excessiveTurn == nil else {
+                matchStreak = 0
+                poseHoldStartedAt = nil
+                return
+            }
             await processMatchedEnrollFrame(result, yaw: yaw, pitch: pitch, pose: pose)
         }
     }
@@ -850,7 +881,8 @@ final class OnboardingController {
         let alignmentOK = result.alignmentTier == .fivePoint
         let widened = ContinuousClock.now - poseStartedAt > stallTimeout
         let poseOK = poseMatches(yaw: yaw, pitch: pitch, pose: pose, widened: widened)
-        guard qualityOK, alignmentOK, !isTooFar, poseOK else {
+        guard qualityOK, alignmentOK, !isTooFar,
+              excessiveTurnDirection(yaw: yaw, pitch: pitch) == nil, poseOK else {
             matchStreak = 0
             poseHoldStartedAt = nil
             return
@@ -901,6 +933,32 @@ final class OnboardingController {
         case .left: return yaw > yawInnerThreshold / factor && yaw < yawOuterCap
         case .right: return yaw < -yawInnerThreshold / factor && yaw > -yawOuterCap
         }
+    }
+
+    /// Reports the dominant axis when a user has gone beyond enrollment's safe pose
+    /// envelope. At these angles, Vision's embedding is unlikely to be a useful,
+    /// repeatable sample, so capture is explicitly rejected before the hold timer runs.
+    private func excessiveTurnDirection(yaw: Float, pitch: Float) -> ExcessiveTurn? {
+        let yawOvershoot = abs(yaw) / yawOuterCap
+        let pitchOvershoot = abs(pitch) / pitchOuterCap
+        guard max(yawOvershoot, pitchOvershoot) >= 1 else { return nil }
+
+        let yawExceeded = yawOvershoot >= 1
+        let pitchExceeded = pitchOvershoot >= 1
+        if yawExceeded, pitchExceeded {
+            // Vision uses positive yaw for a left turn and negative pitch for an upward turn.
+            switch (yaw > 0, pitch < 0) {
+            case (true, true): return .topLeft
+            case (false, true): return .topRight
+            case (false, false): return .bottomRight
+            case (true, false): return .bottomLeft
+            }
+        }
+
+        if yawOvershoot >= pitchOvershoot {
+            return yaw > 0 ? .left : .right
+        }
+        return pitch < 0 ? .up : .down
     }
 
     /// Confirmed empirically: Vision reports negative pitch for "looking up" and positive
@@ -1001,6 +1059,10 @@ final class OnboardingController {
     // MARK: - Password
 
     func finish(password: String) async -> Bool {
+        // The default Confirm button and the SecureField's Return handler can
+        // arrive back-to-back. Keep password replacement and any enrollment
+        // commit single-flight even before SwiftUI has redrawn the disabled UI.
+        guard !isSavingPassword else { return false }
         let trimmed = password
         guard !trimmed.isEmpty else {
             passwordError = "Enter a password."

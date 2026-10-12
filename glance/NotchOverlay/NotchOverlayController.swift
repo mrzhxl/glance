@@ -326,14 +326,16 @@ final class NotchOverlayController {
     /// orders it out entirely if not.
     func collapse() async {
         guard phase != .closed, phase != .collapsing else { return }
+        // Capture the display's real closed notch dimensions before changing phase.
+        // The phase change starts the SwiftUI closing animation; measuring afterward
+        // would animate toward stale geometry, then expose the real (smaller) notch
+        // when the window is hidden.
+        geometry = windowController.currentGeometry
         phase = .collapsing
         updateInteractivity()
         try? await Task.sleep(for: collapseAnimationDuration)
         guard phase == .collapsing else { return }
 
-        // Same re-measure as `disarm()` — self-corrects a geometry captured
-        // during a mid-wake reading before the panel settles to `.closed`.
-        geometry = windowController.currentGeometry
         content = .scan(.idle)
         if isArmed {
             phase = .closed

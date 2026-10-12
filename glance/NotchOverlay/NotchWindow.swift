@@ -8,13 +8,18 @@
 //
 
 import AppKit
+import CoreGraphics
 
 final class NotchWindow: NSPanel {
+    /// Above regular, menu-bar, screen-saver, and assistive overlays. The
+    /// shielding level is the highest public Core Graphics window tier;
+    private static let overlayWindowLevel = NSWindow.Level(
+        rawValue: Int(CGShieldingWindowLevel()) + 1
+    )
+
     /// Whether the panel may become key. Tracked separately from
     /// `ignoresMouseEvents`, which `NotchWindowController` flips on and off as
-    /// the cursor moves over/away from the visible panel — tying key status to
-    /// that would stop onboarding's text fields taking focus whenever the
-    /// cursor happened to sit outside the panel.
+    /// the cursor moves over/away from the visible panel
     var acceptsKey = false
 
     init(contentRect: NSRect) {
@@ -29,7 +34,7 @@ final class NotchWindow: NSPanel {
         hasShadow = false
         isMovable = false
         isReleasedWhenClosed = false
-        level = .mainMenu + 3
+        level = Self.overlayWindowLevel
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
 
         // Decorative by default — clicks pass through until a failed attempt is

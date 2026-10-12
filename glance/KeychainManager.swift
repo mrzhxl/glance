@@ -76,14 +76,29 @@ enum KeychainManager {
         }
     }
 
-    /// Replaces any existing item. Pass `accessControl` to gate future reads behind Touch ID; `nil` for device-local, unlock-only.
+    /// Stores an item, updating its data in place when it already exists. Updating
+    /// avoids the delete/add gap that can race with a second submit and produce
+    /// `errSecDuplicateItem`. Existing access-control attributes are preserved;
+    /// this method's access-control argument applies when adding a new item.
     nonisolated static func save(account: String, data: Data, accessControl: SecAccessControl? = nil) throws {
-        let deleteQuery: [String: Any] = [
+        let itemQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(deleteQuery as CFDictionary)
+
+        let updateStatus = SecItemUpdate(
+            itemQuery as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
+        switch updateStatus {
+        case errSecSuccess:
+            return
+        case errSecItemNotFound:
+            break // Add below.
+        default:
+            throw KeychainError.osStatus(updateStatus)
+        }
 
         var addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -98,7 +113,19 @@ enum KeychainManager {
         }
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else { throw KeychainError.osStatus(status) }
+        if status == errSecSuccess { return }
+        // Another save may have added the item after our update reported
+        // not-found. Complete that competing replacement with an update instead
+        // of surfacing an avoidable “item already exists” error.
+        if status == errSecDuplicateItem {
+            let retryStatus = SecItemUpdate(
+                itemQuery as CFDictionary,
+                [kSecValueData as String: data] as CFDictionary
+            )
+            guard retryStatus == errSecSuccess else { throw KeychainError.osStatus(retryStatus) }
+            return
+        }
+        throw KeychainError.osStatus(status)
     }
 
     nonisolated static func delete(account: String) throws {

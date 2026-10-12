@@ -151,7 +151,9 @@ struct YourFaceSettingsPage: View {
             ForEach(store.identities) { identity in
                 IdentityCard(
                     identity: identity,
-                    isStale: identity.isStale(comparedTo: environment.faceLabController.pipeline.embedder),
+                    // Face Lab is a debug-only, lazily-created tool. The live unlock
+                    // pipeline is the authoritative embedder for this normal Settings check.
+                    isStale: identity.isStale(comparedTo: environment.faceUnlockCoordinator.pipeline.embedder),
                     canStartFlow: !enrollmentFlowIsRunning,
                     isEnabled: enabledBinding(for: identity),
                     recapture: { OnboardingController.startRecapture(of: identity) },
